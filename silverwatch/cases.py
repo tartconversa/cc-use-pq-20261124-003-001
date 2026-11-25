@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from sqlite3 import Connection
 
-from silverwatch import evidence
+from silverwatch import evidence, identity
 from silverwatch.contracts import Case, Remediation, ReviewDecision
 from silverwatch.digest import digest
 from silverwatch.errors import conflict, invalid, missing
@@ -19,7 +19,8 @@ def create(db: Connection, body: Case, source_ref: str, revision: int) -> dict:
     if batch is None:
         raise missing("touch_batch", body.batch_id)
     touch = batch["payload"]
-    if touch["provider_id"] != body.provider_id or touch["region"] == "":
+    if touch["region"] == "" or not identity.linked_case_scope(
+            db, body.provider_id, touch["provider_id"], at=body.reported_at):
         raise invalid("case_scope", "线索归属与触达批次不一致")
     return append(db, "case", body.case_id, revision, source_ref,
                   body.model_dump(mode="json"), body.reported_at)

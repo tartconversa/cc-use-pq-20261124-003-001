@@ -8,7 +8,7 @@ from sqlite3 import Connection
 from silverwatch.analysis import format_rate
 from silverwatch.errors import invalid
 from silverwatch.ledger import current_cut
-from silverwatch.registry import catalog, needs
+from silverwatch.registry import current_supply, needs
 
 
 def plan_region(db: Connection, *, region: str, period_end: datetime,
@@ -18,7 +18,7 @@ def plan_region(db: Connection, *, region: str, period_end: datetime,
     chosen_cut = current_cut(db) if cut is None else cut
     if chosen_cut > current_cut(db):
         raise invalid("planning_cut", "规划截点尚未存在")
-    provider_rows = catalog(db, region=region, cut=chosen_cut)
+    provider_rows = current_supply(db, region=region, cut=chosen_cut, at=period_end)
     demand_rows = needs(db, region=region, cut=chosen_cut, as_of=period_end)
     supply_by_area = defaultdict(int)
     providers_by_area = defaultdict(list)

@@ -10,7 +10,7 @@ from silverwatch.contracts import AnalysisPolicy, ServiceKind
 from silverwatch.digest import digest
 from silverwatch.errors import invalid
 from silverwatch.ledger import current_cut
-from silverwatch.registry import catalog, needs, touch_facts
+from silverwatch.registry import catalog, current_supply, needs, touch_facts
 from silverwatch.reconciliation import reconcile
 
 
@@ -65,6 +65,7 @@ def supply_coverage(providers: list[dict], need: list[dict], region: str,
     denominator = Counter()
     available = Counter()
     examples = defaultdict(list)
+    counted: set[str] = set()
     for item in need:
         if item["region"] != region:
             continue
@@ -75,11 +76,14 @@ def supply_coverage(providers: list[dict], need: list[dict], region: str,
     for provider in providers:
         if provider["region"] != region or provider["status"] != "active":
             continue
+        if provider["provider_id"] in counted:
+            continue
         if as_of is not None:
             starts = datetime.fromisoformat(provider["active_from"])
             ends = datetime.fromisoformat(provider["active_until"]) if provider["active_until"] else None
             if starts > as_of or ends is not None and ends <= as_of:
                 continue
+        counted.add(provider["provider_id"])
         key = provider["service_kind"]
         available[key] += provider["capacity_per_month"]
         examples[key].append(provider["provider_id"])
@@ -189,7 +193,8 @@ def run(db: Connection, *, cut: int, as_of: datetime, region: str,
     current = current_cut(db)
     if cut > current:
         raise invalid("analysis_cut", "分析截点超出当前事实")
-    providers = catalog(db, region=region, cut=cut)
+    providers = current_supply(db, region=region, cut=cut, as_of=as_of, at=as_of)
+    all_providers = catalog(db, region=region, cut=cut, as_of=as_of, at=as_of)
     needs_rows = needs(db, region=region, cut=cut, as_of=as_of)
     rows = risk_rows(db, cut, as_of, region=region, service_kind=service_kind, cohort=cohort)
     reconciliation = reconcile(db, cut=cut, as_of=as_of)
@@ -239,6 +244,14 @@ def run(db: Connection, *, cut: int, as_of: datetime, region: str,
             "inconclusive": sum(row["inconclusive"] for row in scored),
         },
         "method": "Only facts observed by both the sequence cut and time cut are included; incomplete outreach is shown as uncertain.",
+        "identity": {
+            "effective_change_ids": sorted({change_id for row in all_providers
+                                            for change_id in row["identity"]["applied_change_ids"]}),
+            "superseded_provider_ids": sorted(
+                {row["provider_id"] for row in all_providers
+                 if row["identity"]["supply_superseded"]}),
+            "note": "Capacity counts each confirmed identity chain once, at its current head as of the analysis time.",
+        },
     }
     document["digest"] = digest(document)
     return document

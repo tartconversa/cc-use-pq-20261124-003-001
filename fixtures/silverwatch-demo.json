@@ -12,6 +12,33 @@
     "status": "active",
     "updated_at": "2026-10-01T08:00:00Z"
   },
+  "successor_provider": {
+    "provider_id": "river-meals-successor",
+    "display_name": "River District Meal Service (2027 operator)",
+    "region": "suburban",
+    "district": "river-district",
+    "service_kind": "meal",
+    "capacity_per_month": 900,
+    "active_from": "2026-11-15T00:00:00Z",
+    "active_until": null,
+    "status": "active",
+    "updated_at": "2026-11-12T08:00:00Z"
+  },
+  "identity_change": {
+    "change_id": "river-meals-succession",
+    "predecessor_id": "river-meals",
+    "successor_id": "river-meals-successor",
+    "change_type": "succession",
+    "effective_from": "2026-11-15T00:00:00Z",
+    "scope": ["supply", "cases"],
+    "status": "confirmed",
+    "confirmed_by": "registry-clerk",
+    "confirmed_at": "2026-11-12T09:00:00Z",
+    "evidence_ref": "registry://river-meals-licence-transfer",
+    "note": "The October bulletin keeps the original operator; the successor counts from 15 November.",
+    "source_ref": "registry-feed",
+    "observed_at": "2026-11-12T10:00:00Z"
+  },
   "touch": {
     "batch_id": "river-october",
     "campaign_id": "meal-open-day",

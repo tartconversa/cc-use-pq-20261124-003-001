@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from silverwatch import analysis, cases, exports, lineage, publication, queries, registry, service
 from silverwatch.contracts import Approval, Remediation
@@ -110,7 +111,8 @@ class AnalysisSemanticsTests(DatabaseCase, unittest.TestCase):
             self.assertIn("severe_open_cases", area["gaps"])
             from silverwatch import review
             review.close(db, "case-one", "substantiated", 1)
-            closed = self.run_analysis(db, as_of="2026-11-25T00:00:00Z")["areas"][0]
+            closed = self.run_analysis(
+                db, as_of=(datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat())["areas"][0]
             self.assertNotIn("severe_open_cases", closed["gaps"])
 
     def test_unmatched_report_intake_is_visible_and_blocks_area(self):

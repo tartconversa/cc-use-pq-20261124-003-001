@@ -8,10 +8,10 @@ from typing import Iterator
 from fastapi import Body, FastAPI, Query, Response
 from pydantic import BaseModel, Field
 
-from silverwatch import analysis, cases, channels, comparison, csvio, exports, intake, lineage, ndjson, planning, publication, queries, reconciliation, registry, review, service, trends, workqueue
+from silverwatch import analysis, cases, channels, comparison, csvio, exports, identity, intake, lineage, ndjson, planning, publication, queries, reconciliation, registry, review, service, trends, workqueue
 from silverwatch.contracts import (AnalysisPolicy, AnalysisRequest, Approval, Case,
-                                   CaseEvidence, NeedBatch, Provider, PublishRequest,
-                                   Remediation, ReviewDecision, TouchBatch)
+                                   CaseEvidence, NeedBatch, Provider, ProviderIdentityChange,
+                                   PublishRequest, Remediation, ReviewDecision, TouchBatch)
 from silverwatch.errors import Problem
 from silverwatch.storage import Store
 
@@ -85,6 +85,27 @@ def create_app(database: str | Path = "silverwatch.sqlite3") -> FastAPI:
         with write() as db:
             return registry.register_provider(db, body, source_ref, revision)
 
+    @app.post("/provider-identities")
+    def add_identity_change(body: ProviderIdentityChange, source_ref: str = Query(min_length=1),
+                            revision: int = Query(ge=1)):
+        with write() as db:
+            return registry.register_identity_change(db, body, source_ref, revision)
+
+    @app.get("/provider-identities")
+    def list_identity_changes(provider_id: str | None = None, cut: int | None = None,
+                              as_of: datetime | None = None, at: datetime | None = None,
+                              include_proposed: bool = True):
+        with read() as db:
+            rows = identity.changes(db, provider_id=provider_id, cut=cut, as_of=as_of,
+                                    include_proposed=include_proposed, at=at)
+        return {"count": len(rows), "changes": rows}
+
+    @app.get("/providers/{provider_id}/identity")
+    def provider_identity(provider_id: str, cut: int | None = None,
+                          as_of: datetime | None = None, at: datetime | None = None):
+        with read() as db:
+            return identity.provider_identity(db, provider_id, cut=cut, as_of=as_of, at=at)
+
     @app.post("/needs")
     def add_need(body: NeedBatch):
         with write() as db:
@@ -156,9 +177,10 @@ def create_app(database: str | Path = "silverwatch.sqlite3") -> FastAPI:
             return workqueue.area_attention(db, region=region, as_of=as_of)
 
     @app.get("/providers/{provider_id}")
-    def get_provider(provider_id: str, cut: int | None = None):
+    def get_provider(provider_id: str, cut: int | None = None, as_of: datetime | None = None,
+                     scope: str = "current"):
         with read() as db:
-            return queries.provider_profile(db, provider_id, cut=cut)
+            return queries.provider_profile(db, provider_id, cut=cut, as_of=as_of, scope=scope)
 
     @app.get("/regions/{region}/overview")
     def overview(region: str, cut: int | None = None, as_of: datetime | None = None):

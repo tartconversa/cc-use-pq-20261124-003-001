@@ -7,12 +7,14 @@ from typing import Callable
 from pydantic import ValidationError
 
 from silverwatch import evidence, registry, review
-from silverwatch.contracts import Case, CaseEvidence, NeedBatch, Provider, ReviewDecision, TouchBatch
+from silverwatch.contracts import (Case, CaseEvidence, NeedBatch, Provider,
+                                   ProviderIdentityChange, ReviewDecision, TouchBatch)
 from silverwatch.errors import Problem, invalid
 from silverwatch.ledger import current_cut
 
 HANDLERS: dict[str, tuple[type, Callable]] = {
     "providers": (Provider, registry.register_provider),
+    "identity_changes": (ProviderIdentityChange, None),
     "needs": (NeedBatch, registry.register_need),
     "touches": (TouchBatch, registry.register_touch),
     "cases": (Case, None),
@@ -35,6 +37,8 @@ def _validate(kind: str, value: dict):
 def _dispatch(db: Connection, kind: str, model, source: str, revision: int) -> dict:
     if kind == "providers":
         return registry.register_provider(db, model, source, revision)
+    if kind == "identity_changes":
+        return registry.register_identity_change(db, model, source, revision)
     if kind == "needs":
         return registry.register_need(db, model)
     if kind == "touches":
@@ -79,6 +83,7 @@ def import_bundle(db: Connection, bundle: dict) -> dict:
                 raise invalid("record_kind", "记录类型或数据对象无效")
             model = _validate(kind, data)
             identity = (kind, getattr(model, "provider_id", None) or
+                        getattr(model, "change_id", None) or
                         getattr(model, "estimate_id", None) or
                         getattr(model, "batch_id", None) or
                         getattr(model, "case_id", None) or

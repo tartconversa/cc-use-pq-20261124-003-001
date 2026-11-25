@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from sqlite3 import Connection
 
 from pydantic import ValidationError

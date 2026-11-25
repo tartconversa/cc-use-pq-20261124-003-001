@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from silverwatch import ndjson, workqueue
 from silverwatch.errors import Problem
@@ -99,7 +100,8 @@ class OperationalQueueTests(DatabaseCase, unittest.TestCase):
                 "verified_by": "auditor-one", "verified_at": "2026-10-19T00:00:00Z", "status": "verified"})
             cases.add_remediation(db, action)
             review.close(db, "case-one", "substantiated", 1)
-            queue = workqueue.investigation_queue(db, as_of=instant("2026-11-25T00:00:00Z"))
+            queue = workqueue.investigation_queue(
+                db, as_of=datetime.now(timezone.utc) + timedelta(minutes=1))
             self.assertEqual(queue["count"], 0)
 
     def test_remediation_queue_marks_overdue_and_verified_status_separately(self):

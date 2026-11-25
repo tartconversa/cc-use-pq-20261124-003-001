@@ -4,33 +4,58 @@ from collections import defaultdict
 from datetime import datetime
 from sqlite3 import Connection
 
-from silverwatch import cases, evidence, registry, review
-from silverwatch.errors import missing
+from silverwatch import cases, evidence, identity, registry, review
+from silverwatch.errors import invalid, missing
 from silverwatch.ledger import current_entities, history, revisions
 
 
-def provider_profile(db: Connection, provider_id: str, *, cut: int | None = None) -> dict:
-    provider = next((row for row in registry.catalog(db, cut=cut)
+def provider_profile(db: Connection, provider_id: str, *, cut: int | None = None,
+                     as_of: datetime | None = None, scope: str = "current") -> dict:
+    """查看机构档案。
+
+    scope="current" 汇总当前接续主体及其已确认历史主体名下的供给、触达和待办；
+    scope="historical" 仅按给定截点回放当时的主体身份。
+    """
+    provider = next((row for row in registry.catalog(db, cut=cut, as_of=as_of)
                      if row["provider_id"] == provider_id), None)
     if provider is None:
         raise missing("provider", provider_id)
-    touch_batches = [row for row in registry.touch_facts(db, cut=cut)
-                     if row["provider_id"] == provider_id]
-    related = review.cases_for_provider(db, provider_id, cut=cut)
+    if scope not in {"current", "historical"}:
+        raise invalid("provider_scope", "档案范围只支持 current 或 historical")
+    if scope == "current":
+        related_ids = identity.case_scope_ids(db, provider_id, cut=cut, as_of=as_of)
+    else:
+        related_ids = {provider_id}
+    touch_batches = [row for row in registry.touch_facts(db, cut=cut, as_of=as_of)
+                     if row["provider_id"] in related_ids]
+    related = [item for item in review.cases_for_provider_scope(db, related_ids, cut=cut,
+                                                               as_of=as_of)]
     by_finding = defaultdict(int)
     for item in related:
         by_finding[item["finding"]["finding"]] += 1
-    return {"provider": provider,
+    open_items = [item for item in related if item["case"]["status"] != "closed"]
+    identity_view = identity.provider_identity(db, provider_id, cut=cut, as_of=as_of,
+                                               at=as_of)
+    head_id = identity_view["resolution"]["supply_current_provider_id"]
+    head = next((row for row in registry.catalog(db, cut=cut, as_of=as_of)
+                 if row["provider_id"] == head_id), None)
+    return {"provider": provider, "scope": scope,
+            "current_supply_provider": head,
+            "related_provider_ids": sorted(related_ids),
+            "identity": identity_view,
             "activity": {"touch_batches": len(touch_batches),
                          "exposed_people": sum(item["exposed_people"] for item in touch_batches),
                          "unanswered_people": sum(item["nonresponse_people"] for item in touch_batches),
-                         "case_count": len(related), "findings": dict(sorted(by_finding.items()))},
+                         "case_count": len(related), "open_case_count": len(open_items),
+                         "findings": dict(sorted(by_finding.items()))},
             "cases": related, "cut": cut}
 
 
 def district_overview(db: Connection, region: str, *, cut: int | None = None,
                       as_of: datetime | None = None) -> dict:
-    providers = registry.catalog(db, region=region, cut=cut)
+    providers = registry.catalog(db, region=region, cut=cut, as_of=as_of)
+    supply = {row["provider_id"] for row in
+              registry.current_supply(db, region=region, cut=cut, as_of=as_of, at=as_of)}
     batches = registry.touch_facts(db, region=region, cut=cut)
     if as_of is not None:
         batches = [row for row in batches if datetime.fromisoformat(row["observed_at"]) <= as_of]
@@ -42,6 +67,8 @@ def district_overview(db: Connection, region: str, *, cut: int | None = None,
                                  "reported_issues": 0, "substantiated": 0,
                                  "pending": 0, "inconclusive": 0, "estimated_need": 0})
     for row in providers:
+        if row["provider_id"] not in supply:
+            continue
         area = areas[row["district"]]
         area["providers"] += 1
         if row["status"] == "active":
@@ -80,12 +107,22 @@ def case_timeline(db: Connection, case_id: str, *, cut: int | None = None,
                  if row["entity_id"] == case_id), None)
     if case is None:
         raise missing("case", case_id)
-    return {"case": case["payload"], "case_event": case["seq"],
+    body = case["payload"]
+    reported = datetime.fromisoformat(body["reported_at"])
+    reported_snapshot = next(
+        (row for row in current_entities(db, "provider", cut=cut, as_of=reported)
+         if row["entity_id"] == body["provider_id"]), None)
+    return {"case": body, "case_event": case["seq"],
             "evidence": evidence.for_case(db, case_id, cut=cut),
             "decisions": cases.decisions(db, case_id, cut=cut, as_of=as_of),
             "finding": cases.finding(db, case_id, cut=cut, as_of=as_of),
             "remediations": [row for row in cases.current_remediations(db, cut=cut, as_of=as_of)
                              if row["case_id"] == case_id],
+            "provider_identity": {
+                "at_report": identity.resolve(db, body["provider_id"], cut=cut, at=reported),
+                "provider_at_report": reported_snapshot["payload"] if reported_snapshot else None,
+                "changes": identity.changes(db, provider_id=body["provider_id"],
+                                            cut=cut, as_of=as_of)},
             "revisions": revisions(db, "case", case_id, cut=cut)}
 
 
@@ -114,7 +151,9 @@ def validate_references(db: Connection, *, cut: int | None = None) -> dict:
         batch = touches.get(item["batch_id"])
         if batch is None:
             problems.append({"entity": row["entity_id"], "issue": "touch_missing"})
-        elif batch["provider_id"] != item["provider_id"]:
+        elif not identity.linked_case_scope(db, item["provider_id"],
+                                           batch["provider_id"], cut=cut,
+                                           at=datetime.fromisoformat(item["reported_at"])):
             problems.append({"entity": row["entity_id"], "issue": "provider_scope_mismatch"})
     for row in needs:
         item = row["payload"]

@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 from sqlite3 import Connection
 
-from silverwatch import cases
+from silverwatch import cases, identity
 from silverwatch.ledger import current_entities
 
 
@@ -25,6 +25,7 @@ def reconcile(db: Connection, *, cut: int | None = None,
         reports = by_batch.get(batch_id, [])
         declared = batch["report_count"]
         problems = []
+        explained = []
         if len(reports) < declared:
             problems.append("case_intake_incomplete")
         if len(reports) > declared:
@@ -35,9 +36,16 @@ def reconcile(db: Connection, *, cut: int | None = None,
         elif (provider["region"] != batch["region"] or
               provider["district"] != batch["district"] or
               provider["service_kind"] != batch["service_kind"]):
-            problems.append("provider_scope_changed")
+            resolution = identity.resolve(db, batch["provider_id"], cut=cut,
+                                          as_of=as_of, at=as_of)
+            if resolution["supply_superseded"]:
+                explained.append("provider_scope_succession")
+            else:
+                problems.append("provider_scope_changed")
         wrong_scope = [case["case_id"] for case in reports
-                       if case["provider_id"] != batch["provider_id"]]
+                       if not identity.linked_case_scope(
+                           db, case["provider_id"], batch["provider_id"], cut=cut,
+                           as_of=as_of, at=datetime.fromisoformat(case["reported_at"]))]
         if wrong_scope:
             problems.append("case_provider_mismatch")
         if batch["exposed_people"] == 0 and batch["report_count"]:
@@ -46,6 +54,7 @@ def reconcile(db: Connection, *, cut: int | None = None,
                         "declared_reports": declared, "received_cases": len(reports),
                         "difference": declared - len(reports), "wrong_scope_cases": wrong_scope,
                         "complete": not problems, "problems": problems,
+                        "explained_by_identity": explained,
                         "event_seq": row["seq"]})
     orphan_cases = sorted(row["entity_id"] for row in case_rows
                           if row["payload"]["batch_id"] not in known_batches)

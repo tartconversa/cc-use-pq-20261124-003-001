@@ -5,9 +5,10 @@ from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from silverwatch import cases, evidence, planning, registry, review, service
+from silverwatch import cases, evidence, identity, planning, registry, review, service
 from silverwatch.contracts import (AnalysisPolicy, Approval, Case, CaseEvidence,
-                                   NeedBatch, Provider, Remediation, ReviewDecision, TouchBatch)
+                                   NeedBatch, Provider, ProviderIdentityChange, Remediation,
+                                   ReviewDecision, TouchBatch)
 from silverwatch.ledger import current_cut
 from silverwatch.storage import Store
 
@@ -19,6 +20,15 @@ def run_fixture(path: str | Path) -> dict:
         with store.transaction(write=True) as db:
             provider = Provider.model_validate(fixture["provider"])
             registry.register_provider(db, provider, "provider-register", 1)
+            identity_change = None
+            identity_view = None
+            if fixture.get("successor_provider"):
+                registry.register_provider(db, Provider.model_validate(
+                    fixture["successor_provider"]), "provider-register", 1)
+            if fixture.get("identity_change"):
+                identity_change = registry.register_identity_change(
+                    db, ProviderIdentityChange.model_validate(fixture["identity_change"]),
+                    "identity-register", 1)
             touch = TouchBatch.model_validate(fixture["touch"])
             registry.register_touch(db, touch)
             need = NeedBatch.model_validate(fixture["need"])
@@ -48,10 +58,18 @@ def run_fixture(path: str | Path) -> dict:
             bulletin = service.publish(db, created["analysis_id"], 0)
             plan = planning.plan_region(db, region="suburban",
                                         period_end=datetime.fromisoformat("2026-11-01T00:00:00+00:00"))
+            later_plan = planning.plan_region(db, region="suburban",
+                                              period_end=datetime.fromisoformat("2026-11-20T00:00:00+00:00"))
+            identity_view = None
+            if identity_change is not None:
+                identity_view = identity.provider_identity(db, provider.provider_id)
             return {"scenario": fixture["scenario"], "analysis": created,
                     "review_ready": review_state["ready"],
                     "bulletin": {"edition": bulletin["edition"],
                                  "digest": bulletin["bulletin_digest"],
                                  "case_counts": bulletin["document"]["case_counts"],
                                  "area_count": len(bulletin["document"]["areas"])},
-                    "service_plan": plan["totals"]}
+                    "service_plan": plan["totals"],
+                    "later_service_plan": later_plan["totals"],
+                    "identity_change": identity_change,
+                    "identity": identity_view}

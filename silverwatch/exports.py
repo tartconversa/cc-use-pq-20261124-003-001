@@ -69,6 +69,13 @@ def public_view(bulletin: dict) -> dict:
     result = copy.deepcopy(bulletin)
     document = result["document"]
     threshold = document["policy"]["minimum_exposure"]
+    # 经营身份链只在内部审计中可解释；公开投影不披露服务方编号。
+    identity_block = document.pop("identity", None)
+    if identity_block is not None:
+        document["identity_scope"] = {
+            "effective_change_count": len(identity_block.get("effective_change_ids", [])),
+            "superseded_provider_count": len(identity_block.get("superseded_provider_ids", [])),
+        }
     masks = {"exposed", "nonresponse", "uncertainty_people", "reports", "substantiated",
              "pending", "inconclusive", "verified_remediations", "substantiated_rate",
              "potential_rate_bounds", "reconciliation_incomplete_batches", "batches"}

@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (BaseModel, ConfigDict, Field, StringConstraints,
+                      field_validator, model_validator)
 
 Key = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,47}$")]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
@@ -42,6 +43,57 @@ class Provider(Strict):
     def period(self):
         if self.active_until and self.active_until <= self.active_from:
             raise ValueError("供给结束时间必须晚于生效时间")
+        return self
+
+
+class ProviderIdentityChange(Strict):
+    """记录经营主体延续关系；只有已确认记录才会进入当前视图。"""
+
+    change_id: Key
+    predecessor_id: Key
+    successor_id: Key
+    change_type: Literal["rename", "succession", "relocation"]
+    effective_from: datetime
+    scope: list[Literal["supply", "cases"]] = Field(
+        default_factory=lambda: ["supply", "cases"], min_length=1, max_length=2)
+    status: Literal["proposed", "confirmed"] = "proposed"
+    confirmed_by: Key | None = None
+    confirmed_at: datetime | None = None
+    evidence_ref: Text | None = None
+    note: Text
+    source_ref: Text
+    observed_at: datetime
+
+    @field_validator("scope", mode="before")
+    @classmethod
+    def parse_scope(cls, value):
+        """允许 CSV 以用分号或逗号分隔的文本表达作用范围。"""
+        if value is None:
+            return ["supply", "cases"]
+        if isinstance(value, str):
+            parts = [part.strip() for part in value.replace(";", ",").split(",")]
+            return [part for part in parts if part]
+        return value
+
+    @field_validator("scope")
+    @classmethod
+    def distinct_scope(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError("生效范围不能重复")
+        return value
+
+    @model_validator(mode="after")
+    def identity(self):
+        if self.predecessor_id == self.successor_id:
+            raise ValueError("经营身份变更的前后编号不能相同")
+        confirmation = (self.confirmed_by, self.confirmed_at, self.evidence_ref)
+        if self.status == "confirmed":
+            if any(item is None for item in confirmation):
+                raise ValueError("已确认的经营身份变更需要确认人员、确认时间和依据")
+            if self.confirmed_at > self.observed_at:
+                raise ValueError("确认时间不能晚于变更记录时间")
+        elif any(item is not None for item in confirmation):
+            raise ValueError("尚未确认的变更不能带有确认信息")
         return self
 
 

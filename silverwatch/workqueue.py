@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from sqlite3 import Connection
 
-from silverwatch import cases, evidence, reconciliation, registry
+from silverwatch import cases, evidence, identity, reconciliation, registry
 from silverwatch.ledger import current_entities
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -37,11 +37,15 @@ def investigation_queue(db: Connection, *, region: str | None = None,
             reasons.append("review_incomplete")
         if not any(item["verified"] for item in material):
             reasons.append("verified_evidence_missing")
+        identity_change = registry.identity_changes_for_case(db, body, cut=cut, at=instant)
+        resolution = identity.resolve(db, body["provider_id"], cut=cut, at=instant)
         items.append({"case_id": body["case_id"], "provider_id": body["provider_id"],
+                      "current_provider_id": resolution["supply_current_provider_id"],
                       "batch_id": body["batch_id"], "district": batch["district"] if batch else None,
                       "severity": body["severity"], "status": body["status"],
                       "finding": finding["finding"], "age_days": age,
                       "missing_roles": missing_roles, "evidence_count": len(material),
+                      "identity_changes": identity_change,
                       "reasons": reasons, "event_seq": row["seq"]})
     items.sort(key=lambda item: (SEVERITY_ORDER[item["severity"]], -item["age_days"], item["case_id"]))
     return {"as_of": instant.isoformat(), "cut": cut, "count": len(items), "items": items}
@@ -59,7 +63,9 @@ def remediation_queue(db: Connection, *, as_of: datetime | None = None,
         state = "verified" if action["status"] == "verified" else action["status"]
         if state not in {"verified", "rejected"} and due < instant:
             state = "overdue"
+        resolution = identity.resolve(db, action["provider_id"], cut=cut, at=instant)
         items.append({**action, "provider_id": action["provider_id"],
+                      "current_provider_id": resolution["supply_current_provider_id"],
                       "case_severity": case["severity"] if case else None,
                       "case_status": case["status"] if case else "missing",
                       "queue_state": state, "days_to_due": (due - instant).days})
@@ -72,7 +78,8 @@ def area_attention(db: Connection, *, region: str, as_of: datetime,
                    cut: int | None = None) -> dict:
     report = reconciliation.reconcile(db, cut=cut, as_of=as_of)
     incomplete = [row for row in report["batches"] if not row["complete"]]
-    provider_rows = {row["provider_id"]: row for row in registry.catalog(db, region=region, cut=cut)}
+    provider_rows = {row["provider_id"]: row for row in registry.catalog(db, region=region,
+                                                                        cut=cut, as_of=as_of)}
     items = []
     for batch in incomplete:
         provider = provider_rows.get(batch["provider_id"])

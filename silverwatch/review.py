@@ -26,13 +26,14 @@ def decide(db: Connection, body: ReviewDecision) -> dict:
     return cases.submit_decision(db, body)
 
 
-def case_status(db: Connection, case_id: str, *, cut: int | None = None) -> dict:
-    row = next((value for value in current_entities(db, "case", cut=cut)
+def case_status(db: Connection, case_id: str, *, cut: int | None = None,
+                as_of: datetime | None = None) -> dict:
+    row = next((value for value in current_entities(db, "case", cut=cut, as_of=as_of)
                 if value["entity_id"] == case_id), None)
     if row is None:
         raise missing("case", case_id)
-    finding = cases.finding(db, case_id, cut=cut)
-    remediations = [value for value in cases.current_remediations(db, cut=cut)
+    finding = cases.finding(db, case_id, cut=cut, as_of=as_of)
+    remediations = [value for value in cases.current_remediations(db, cut=cut, as_of=as_of)
                     if value["case_id"] == case_id]
     from silverwatch.evidence import for_case
 
@@ -60,10 +61,22 @@ def close(db: Connection, case_id: str, expected_finding: str, revision: int) ->
     return append(db, "case", case_id, revision, "case-management", body, observed)
 
 
-def cases_for_provider(db: Connection, provider_id: str, *, cut: int | None = None) -> list[dict]:
-    return [case_status(db, row["entity_id"], cut=cut)
-            for row in current_entities(db, "case", cut=cut)
-            if row["payload"]["provider_id"] == provider_id]
+def cases_for_provider(db: Connection, provider_id: str, *, cut: int | None = None,
+                       as_of: datetime | None = None) -> list[dict]:
+    """按当前主体档案列出关联案件，涵盖已确认接续的历史主体。"""
+    from silverwatch import identity
+
+    return cases_for_provider_scope(db, identity.case_scope_ids(db, provider_id, cut=cut,
+                                                               as_of=as_of),
+                                    cut=cut, as_of=as_of)
+
+
+def cases_for_provider_scope(db: Connection, provider_ids, *, cut: int | None = None,
+                             as_of: datetime | None = None) -> list[dict]:
+    wanted = set(provider_ids)
+    return [case_status(db, row["entity_id"], cut=cut, as_of=as_of)
+            for row in current_entities(db, "case", cut=cut, as_of=as_of)
+            if row["payload"]["provider_id"] in wanted]
 
 
 def remediation_queue(db: Connection, *, at: datetime | None = None) -> dict:
